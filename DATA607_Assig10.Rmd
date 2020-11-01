@@ -2,12 +2,14 @@
 title: "DATA607: Sentiment Analysis"
 author: "Alexis Mekueko"
 date: "10/31/2020"
-output: html_document
-header-includes: 
-       - \usepackage{tikz}
-       - \usetikzlibrary{positioning,shapes.multipart,shapes}
-
-
+output: 
+  html_document:
+    #css: style.css
+    #df_print: paged
+  slidy_presentation: default
+  pdf_document: default
+  beamer_presentation: default
+  ioslides_presentation: default
 ---
 
 <!-- ```{r setup, include=FALSE} -->
@@ -27,22 +29,502 @@ Github link: https://github.com/asmozo24/DATA607_Assignment10
 Web link: https://rpubs.com/amekueko/684055
 
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## R Packages
 
-```{r cars}
-summary(cars)
+```{r load-packages, message=FALSE}
+#loading all library needed for this assignment
+# this library are already in my Local downloaded_packages if not, I can install each
+# install.packages("rtweet")
+library(tidyverse) 
+library(DT)
+library(knitr)
+
+#library(plyr)
+library(XML)
+library(RCurl)
+library(jsonlite)
+library(httr)
+library(tidytext)
+library(tidyr)
+library(janeaustenr)
+library(textdata) # https://rdrr.io/cran/textdata/f/README.md
+get_sentiments("afinn") #general purpose lexions from Finn Arup Nielsen, AFINN is a lexicon of English words rated for valence with an integer between minus five (negative) and plus five (positive). 
+library(wordcloud)
+library(tm)
+library(reshape2)
+library(syuzhet)
+library(rtweet)
+library(corpus)
+
+#library(maps)
+#library(dice)
+# #library(VennDiagram)
+# #library(help = "dice")
+#ibrary(DBI)
+#library(dbplyr)
+
+# library(rstudioapi)
+# library(RJDBC)
+# library(odbc)
+# library(RSQLite)
+# #library(rvest)
+
+library(readr)
+#library(ggpubr)
+#library(fitdistrplus)
+#library(ggplot2)
+#library(moments)
+#library(qualityTools)
+#library(normalp)
+#library(utils)
+#library(MASS)
+#library(qqplotr)
+#library(DATA606)
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+
+
+# Description 
+This assignment of week 10 is about sentiment analysis. Sentiment analysis is the  use of language processing, text analysis, computational linguistics, and biometrics to systematically identify, extract, quantify, and study affective states and subjective information. To explore this language, we will start by getting the primary example code from book, In Text Mining with R, chapter 2. We will extend this sample code to incorporate at leasr one additional sentiment lexicon. We will include the references at the last part.
+
+
+# Approach
+We will start by replicating the sample code from the book. 
+
+# Sentiment analysis with inner join
+
+```{r }
+
+#Let’s look at the words with a joy score from the NRC lexicon. What are the most common joy words in Emma? First, we need to take the text of the novels and convert the text to the tidy format using unnest_tokens()
+
+tidy_books <- austen_books() %>%
+  group_by(book) %>%
+  mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(text, regex("^chapter [\\divxlc]",
+      ignore_case = TRUE
+    )))
+  ) %>%
+  ungroup() %>%
+  unnest_tokens(word, text) #Notice that we chose the name word for the output column from unnest_tokens()
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+```{r }
+# Now that the text is in a tidy format with one word per row, we are ready to do the sentiment analysis
+nrc_joy <- get_sentiments("nrc") %>%  #required download from Mohammad, Saif M. and Turney, Peter D.
+  filter(sentiment == "joy") # let’s use the NRC lexicon and filter() for the joy words
+
+tidy_books %>%  #by grouping filter(), inner_join, the data frame with the text from the books for the words from Emma  to perform the sentiment analysis.
+  filter(book == "Emma") %>%  #
+  inner_join(nrc_joy) %>%
+  count(word, sort = TRUE) # the most common joy words in Emma?
+
+
+```
+
+The %/% operator does integer division (x %/% y is equivalent to floor(x/y)) so the index keeps track of which 80-line section of text we are counting up negative and positive sentiment in. 
+For these books, using 80 lines works well, but this can vary depending on individual texts, how long the lines were to start with, etc
+
+```{r }
+
+# use spread() so that we have negative and positive sentiment in separate columns, and lastly calculate a net sentiment (positive - negative).
+jane_austen_sentiment <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(book, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+
+```
+
+Now we can plot these sentiment scores across the plot trajectory of each novel
+
+```{r }
+# we are plotting against the index on the x-axis that keeps track of narrative time in sections of text.
+ggplot(jane_austen_sentiment, aes(index, sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 2, scales = "free_x")
+#We can see in Figure 2.2 how the plot of each novel changes toward more positive or negative sentiment over the trajectory of the story.
+
+```
+
+# Comparing the three sentiment dictionaries
+
+ Let’s use all three sentiment lexicons and examine how the sentiment changes across the narrative arc of Pride and Prejudice.
+
+```{r }
+#let’s use filter() to choose only the words from the one novel we are interested in.
+pride_prejudice <- tidy_books %>%
+  filter(book == "Pride & Prejudice")
+pride_prejudice
+
+```
+
+we can use inner_join() to calculate the sentiment in different ways.
+Remember from above that the AFINN lexicon measures sentiment with a numeric score between -5 and 5, while the other two lexicons categorize words in a binary fashion, either positive or negative. To find a sentiment score in chunks of text throughout the novel, we will need to use a different pattern for the AFINN lexicon than for the other two. 
+
+
+```{r }
+
+afinn <- pride_prejudice %>%
+  inner_join(get_sentiments("afinn")) %>%
+  group_by(index = linenumber %/% 80) %>%  # use integer division (%/%) to define larger sections of text that span multiple lines
+  summarise(sentiment = sum(value)) %>%
+  mutate(method = "AFINN")   #use the same pattern mutate() to find the net sentiment in each of these sections of text.
+
+bing_and_nrc <- bind_rows(
+  pride_prejudice %>%
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),  #use the same pattern mutate() to find the net sentiment in each of these sections of text.
+  pride_prejudice %>%
+    inner_join(get_sentiments("nrc") %>%
+      filter(sentiment %in% c(
+        "positive",
+        "negative"
+      ))) %>%
+    mutate(method = "NRC")
+) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%   #use the same pattern with count(), spread() to find the net sentiment in each of these sections of text.
+  mutate(sentiment = positive - negative)
+
+
+```
+We now have an estimate of the net sentiment (positive - negative) in each chunk of the novel text for each sentiment lexicon. Let’s bind them together and visualize them in Figure 2.3.
+
+
+```{r }
+
+bind_rows(
+  afinn,
+  bing_and_nrc
+) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+
+```
+
+for example, the result for the NRC lexicon biased so high in sentiment compared to the Bing et al. result? Let’s look briefly at how many positive and negative words are in these lexicons.
+
+```{r }
+
+get_sentiments("nrc") %>%
+  filter(sentiment %in% c(
+    "positive",
+    "negative"
+  )) %>%
+  count(sentiment)
+
+get_sentiments("bing") %>%
+  count(sentiment)
+
+
+```
+# Most common positive and negative words
+By implementing count() here with arguments of both word and sentiment, we find out how much each word contributed to each sentiment.
+
+```{r }
+
+#By implementing count() here with arguments of both word and sentiment, we find out how much each word contributed to each sentiment.
+bing_word_counts <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+```
+
+This can be shown visually, and we can pipe straight into ggplot2, if we like, because of the way we are consistently using tools built for handling tidy data frames.
+
+```{r }
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(
+    y = "Contribution to sentiment",
+    x = NULL
+  ) +
+  coord_flip()
+
+
+```
+
+Figure 2.4: Words that contribute to positive and negative sentiment in Jane Austen’s novels 
+Figure 2.4 lets us spot an anomaly in the sentiment analysis; the word “miss” is coded as negative but it is used as a title for young, unmarried women in Jane Austen’s works. If it were appropriate for our purposes, we could easily add “miss” to a custom stop-words list using bind_rows(). We could implement that with a strategy such as this.
+
+```{r }
+
+custom_stop_words <- bind_rows(
+  tibble(
+    word = c("miss"),
+    lexicon = c("custom")
+  ),
+  stop_words
+)
+
+custom_stop_words
+
+
+```
+
+
+# Worldcloud
+We’ve seen that this tidy text mining approach works well with ggplot2, but having our data in a tidy format is useful for other plots as well.
+
+For example, consider the wordcloud package, which uses base R graphics. Let’s look at the most common words in Jane Austen’s works as a whole again, but this time as a wordcloud in Figure 2.5.
+
+```{r }
+
+
+tidy_books %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+
+```
+
+Figure 2.5: The most common words in Jane Austen’s novels 
+
+Let’s do the sentiment analysis to tag positive and negative words using an inner join, then find the most common positive and negative words. Until the step where we need to send the data to comparison.cloud(), this can all be done with joins, piping, and dplyr because our data is in tidy format.
+
+```{r }
+#In other functions, such as comparison.cloud(), you may need to turn the data frame into a matrix with reshape2’s acast()...library(reshape2)
+
+tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(
+    colors = c("gray20", "gray80"),
+    max.words = 100
+  )
+
+```
+Figure 2.6: Most common positive and negative words in Jane Austen’s novels 
+The size of a word’s text in Figure 2.6 is in proportion to its frequency within its sentiment. We can use this visualization to see the most important positive and negative words, but the sizes of the words are not comparable across sentiments.
+
+
+# Looking at units beyond just words
+
+lots of useful work can be done by tokenizing at the word level, but sometimes it is useful or necessary to look at different units of text. For example, some sentiment analysis algorithms look beyond only unigrams (i.e. single words) to try to understand the sentiment of a sentence as a whole. These algorithms try to understand that "I am not having a good day."
+For these, we may want to tokenize text into sentences, and it makes sense to use a new name for the output column in such a case.
+
+```{r }
+
+PandP_sentences <- tibble(text = prideprejudice) %>%
+  unnest_tokens(sentence, text, token = "sentences")
+
+```
+
+
+#Let’s look at just one.
+
+```{r }
+
+PandP_sentences$sentence[2]
+
+```
+
+The sentence tokenizing does seem to have a bit of trouble with UTF-8 encoded text, especially with sections of dialogue; it does much better with punctuation in ASCII. One possibility, if this is important, is to try using iconv(), with something like iconv(text, to = 'latin1') in a mutate statement before unnesting.
+
+Another option in unnest_tokens() is to split into tokens using a regex pattern. We could use this, for example, to split the text of Jane Austen’s novels into a data frame by chapter.
+
+```{r }
+
+austen_chapters <- austen_books() %>%
+  group_by(book) %>%
+  unnest_tokens(chapter, text,
+    token = "regex",
+    pattern = "Chapter|CHAPTER [\\dIVXLC]"
+  ) %>%
+  ungroup()
+
+austen_chapters %>%
+  group_by(book) %>%
+  summarise(chapters = n())
+
+```
+
+We have recovered the correct number of chapters in each novel (plus an “extra” row for each novel title). In the austen_chapters data frame, each row corresponds to one chapter.
+
+Near the beginning of this chapter, we used a similar regex to find where all the chapters were in Austen’s novels for a tidy data frame organized by one-word-per-row. We can use tidy text analysis to ask questions such as what are the most negative chapters in each of Jane Austen’s novels? 
+
+First, let’s get the list of negative words from the Bing lexicon. Second, let’s make a data frame of how many words are in each chapter so we can normalize for the length of chapters. Then, let’s find the number of negative words in each chapter and divide by the total words in each chapter. For each book, which chapter has the highest proportion of negative words?
+
+
+```{r }
+
+bingnegative <- get_sentiments("bing") %>%
+  filter(sentiment == "negative")
+
+wordcounts <- tidy_books %>%
+  group_by(book, chapter) %>%
+  summarize(words = n())
+
+tidy_books %>%
+  semi_join(bingnegative) %>%
+  group_by(book, chapter) %>%
+  summarize(negativewords = n()) %>%
+  left_join(wordcounts, by = c("book", "chapter")) %>%
+  mutate(ratio = negativewords / words) %>%
+  filter(chapter != 0) %>%
+  top_n(1) %>%
+  ungroup()
+
+```
+
+# Extend the sample code from the book.
+
+I am curious about what I discovered from the discussion board and I want to explore it. So, I will use my twitter account as corpus and lexions  dataset_sentence_polarity  sentence polarity dataset (Indicator for sentiment, "neg" for negative and "pos" for positive) , syuzhet ( indicates sentiment scores and emotion) and some lexion above whenever possible. 
+
+Let's see if I could get to my twitter account (barely use it) and download my twiter archive
+While waiting for twitter to deliver the data, let's authenticate on twitter 
+
+
+```{r }
+
+# al_twitter <- read.csv("")
+
+
+
+```
+
+Figure 7.1: All tweets from our accounts 
+While waiting for twitter to deliver the data, let's authenticate on twitter API
+Well, even here, Thanks! We've received your request for API access and are in the process of reviewing it.
+So, let use some paper from today's papers on New York Times ..Time Running Short, Trump and Biden Return to Northern Battlegrounds... A Clash of Views Before Election Day
+
+```{r }
+
+# #login
+# create_token(
+# app = "your_app",
+# consumer_key = "###",
+# consumer_secret = "###",
+# access_token = "###",
+# access_secret = "###")
+
+```
+
+
+
+
+```{r }
+
+# getting the txt file which has the NYT content about Time Running Short, Trump...
+# text <- readLines(file.choose())
+todayNews <- readLines("todayPaperNYT_election.txt", skip = 0)
+todayNews1 <- VCorpus(VectorSource(todayNews))
+```
+
+# Cleaning/Tidy todayNews1
+
+```{r}
+
+# let's remove "/", "@" and "|" and replace with space
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+todayNews1 <- tm_map(todayNews1, toSpace, "/")
+todayNews1 <- tm_map(todayNews1, toSpace, "@")
+todayNews1 <- tm_map(todayNews1, toSpace, "\\|")
+# Remove punctuations
+todayNews1 <- tm_map(todayNews1, removePunctuation)
+# Remove numbers
+todayNews1 <- tm_map(todayNews1, removeNumbers)
+# Remove english common stopwords
+todayNews1 <- tm_map(todayNews1, removeWords, stopwords("english"))
+# Eliminate extra white spaces
+todayNews1 <- tm_map(todayNews1, stripWhitespace)
+```
+
+# Analysis
+
+```{r }
+# makking doc matrix 
+
+todayNews2 <- TermDocumentMatrix(todayNews1)
+todayNews2M <- as.matrix(todayNews2)
+# Sort by descearing value of frequency
+todayNews2M <- sort(rowSums(todayNews2M),decreasing=TRUE)
+todayNews2M <- data.frame(word = names(todayNews2M),freq=todayNews2M)
+# let's view most the top 20 most frequent words
+head(todayNews2M, 20)
+
+```
+
+# Display some plot
+
+```{r }
+
+#let's see plot for frequent words
+barplot(todayNews2M[1:20,]$freq, las = 2, names.arg = todayNews2M[1:20,]$word,
+        col ="yellow", main =" Top 20 Words in Today Paper on NYT",
+        ylab = "Word Occurrency")
+
+# # let's remove some word that are not needed now...time, times, but, the , said 
+# todayNews1 <- tm_map(todayNews1, removeWords, c("time", "times", "but", "the", "said"))
+# todayNews2 <- TermDocumentMatrix(todayNews1)
+# todayNews2M <- as.matrix(todayNews2)
+# # Sort by descearing value of frequency
+# todayNews2M <- sort(rowSums(todayNews2M),decreasing=TRUE)
+# todayNews2M <- data.frame(word = names(todayNews2M),freq=todayNews2M)
+# #let's see plot for frequent words
+# barplot(todayNews2M[1:20,]$freq, las = 2, names.arg = todayNews2M[1:20,]$word,
+#         col ="yellow", main =" Top 20 Words in Today Paper on NYT",
+#         ylab = "Word Occurrency")
+
+```
+
+# Create cloud
+
+```{r }
+set.seed(343443)
+wordcloud(words = todayNews2M$word, freq = todayNews2M$freq, min.freq = 5,
+          max.words=100, random.order=FALSE, rot.per=0.40, 
+          )
+
+```
+
+# Sentiment Score
+
+```{r }
+
+todayNews3 <- get_sentiment(todayNews, method="syuzhet")
+# see the first row of the vector
+head(todayNews3)
+# see summary statistics of the vector
+summary(todayNews3 )
+
+```
+My text file not good for syuzhet
+
+# Conclusion
+
+We are very impressed by how deeply and powerful sentiment analysis can go. For instance, being able to go into a book and extract specific chapter and content is very intuitive. My text file not good for syuzhet because summary point to zero. 
+
+# References
+
+Silge, J. and Robinson, D. (2020).  Text Mining with R: A Tidy Approach.  Retrieved from https://www.tidytextmining.com.
+
+Arnold, Taylor B. 2016. cleanNLP: A Tidy Data Model for Natural Language Processing. https://cran.r-project.org/package=cleanNLP.
+
+Arnold, Taylor, and Lauren Tilton. 2016. coreNLP: Wrappers Around Stanford Corenlp Tools. https://cran.r-project.org/package=coreNLP.
+
+Rinker, Tyler W. 2017. sentimentr: Calculate Text Polarity Sentiment. Buffalo, New York: University at Buffalo/SUNY. http://github.com/trinker/sentimentr.
+
+This data was first used in Bo Pang and Lillian Lee, ``Seeing stars: Exploiting class relationships for sentiment categorization with respect to rating scales.'', Proceedings of the ACL, 2005.
+
+The Syuzhet lexicon, which includes afinnm bing and nrc lexicon,  was developed in the Nebraska Literary Lab under the direction of Matthew L. Jockers. https://www.rdocumentation.org/packages/syuzhet
+
